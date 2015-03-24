@@ -1,83 +1,43 @@
-;+
-; NAME:
-;
-;   LOAD_MAT
-;
-; PURPOSE:
-;
-;   Read MATLAB MAT-files in IDL (see README for more information).
-;
-; CATEGORY:
-;
-;
-;
-; CALLING SEQUENCE:
-;
-;
-;
-; INPUTS:
-;
-;
-;
-; OPTIONAL INPUTS:
-;
-;
-;
-; KEYWORD PARAMETERS:
-;
-;
-;
-; OUTPUTS:
-;
-;
-;
-; OPTIONAL OUTPUTS:
-;
-;
-;
-; COMMON BLOCKS:
-;
-;
-;
-; SIDE EFFECTS:
-;
-;
-;
-; RESTRICTIONS:
-;
-;
-;
-; PROCEDURE:
-;
-;
-;
-; EXAMPLE:
-;
-;   PRO load_mat, <filename>, <path>, STORE_LEVEL=store_level, $
-;                 VERBOSE=verbose, DEBUG=debug
-;
-; MODIFICATION HISTORY:
-;
-;   See changelog.
-;
-; COPYRIGHT:
-;
-;   Copyright (C) 2009 Gordon Farquharson <gordonfarquharson@gmail.com>
-;
-;   This program is free software: you can redistribute it and/or modify
-;   it under the terms of the GNU General Public License as published by
-;   the Free Software Foundation, either version 3 of the License, or
-;   (at your option) any later version.
-;
-;   This program is distributed in the hope that it will be useful,
-;   but WITHOUT ANY WARRANTY; without even the implied warranty of
-;   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;   GNU General Public License for more details.
-;      
-;   You should have received a copy of the GNU General Public License
-;   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-;
-;-
+
+FUNCTION element_tag_struct
+
+    return, { mat_v5_element_tag, $
+              data_type             : 0UL, $
+              data_type_description : '', $
+              data_symbol           : '', $
+              number_of_bytes       : 0UL, $
+              small_element_format  : 0B $
+            }
+
+END
+
+
+FUNCTION subelement_array_flags_struct
+
+    return, { mat_v5_subelement_array_flags, $
+              flag_word_1 : 0UL, $
+              flag_word_2 : 0UL, $
+              complex     : 0B, $
+              global      : 0B, $
+              logical     : 0B, $
+              class       : 0B, $
+              class_description : '', $
+              class_symbol      : '' $
+            }
+
+END
+
+
+FUNCTION subelement_dimensions_array_struct
+
+    ;; IDL allows a maximum of 8 dimensions.
+
+    return, { mat_v5_subelement_dimensions_array, $
+              number_of_dimensions : 0L, $
+              dimensions           : lonarr(8) $
+            }
+
+END
 
 FUNCTION size_of_data_type, data_symbol
 
@@ -99,7 +59,46 @@ FUNCTION size_of_data_type, data_symbol
 
 END
 
-PRO skip_padding_bytes, lun, DEBUG=debug
+FUNCTION mat_type_to_idl, data_symbol
+
+    CASE data_symbol OF
+        'miINT8'   : return, 1
+        'miUINT8'  : return, 1
+        'miUTF8'   : return, 1
+        'miINT16'  : return, 2
+        'miUINT16' : return, 12
+        'miUTF16'  : return, 2
+        'miINT32'  : return, 3
+        'miUINT32' : return, 13
+        'miUTF32'  : return, 3
+        'miSINGLE' : return, 4
+        'miINT64'  : return, 14 
+        'miUINT64' : return, 15 
+        'miDOUBLE' : return, 5
+    ENDCASE
+
+END
+
+FUNCTION cast_to_matrix_type, input_data, matrix_class
+
+    CASE matrix_class OF
+        'mxCHAR_CLASS'   : return, string(byte(temporary(input_data)))
+        'mxDOUBLE_CLASS' : return, double(temporary(input_data))
+        'mxSINGLE_CLASS' : return, float(temporary(input_data))
+        'mxINT8_CLASS'   : return, byte(temporary(input_data))
+        'mxUINT8_CLASS'  : return, byte(temporary(input_data))
+        'mxINT16_CLASS'  : return, fix(temporary(input_data))
+        'mxUINT16_CLASS' : return, uint(temporary(input_data))
+        'mxINT32_CLASS'  : return, long(temporary(input_data))
+        'mxUINT32_CLASS' : return, ulong(temporary(input_data))
+        'mxINT64_CLASS'  : return, long64(temporary(input_data))
+        'mxUINT64_CLASS' : return, ulong64(temporary(input_data))
+    ENDCASE
+
+END
+
+
+PRO skip_padding_bytes_disk, lun, DEBUG=debug
 
     ;; All data elements are aligned on a 64 bit boundary. Calculate
     ;; how many padding bytes exist, and advance the file pointer
@@ -109,173 +108,62 @@ PRO skip_padding_bytes, lun, DEBUG=debug
 
     IF (position MOD 8) NE 0 THEN BEGIN
 
-        number_OF_padding_bytes = 8 - (position MOD 8)
+        number_of_padding_bytes = 8 - (position MOD 8)
 
         IF keyword_set(debug) THEN $
             print, 'Skipping ', number_of_padding_bytes, ' bytes'
 
-        padding_bytes = bytarr(number_of_padding_bytes)
-        readu, lun, padding_bytes
+        new_position = position + number_of_padding_bytes
+        
+        point_lun, lun, new_position
 
     ENDIF
 
 END
 
-PRO read_int8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
+PRO skip_padding_bytes_memory, mem_read_ptr, DEBUG=debug
 
-    ;; FIXME: Not sure how to represent signed 8-bit data in IDL.
+    ;; All data elements are aligned on a 64 bit boundary. Calculate
+    ;; how many padding bytes exist, and advance the read pointer
+    ;; appropriately.
 
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = bytarr(number_of_elements)
-    readu, lun, data
+    IF (mem_read_ptr MOD 8) NE 0 THEN BEGIN
 
-END
+        number_of_padding_bytes = 8 - (mem_read_ptr MOD 8)
 
-PRO read_uint8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
+        IF keyword_set(debug) THEN $
+            print, 'Skipping ', number_of_padding_bytes, ' bytes'
 
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = bytarr(number_of_elements)
-    readu, lun, data
+        mem_read_ptr = mem_read_ptr + number_of_padding_bytes
 
-END
-
-PRO read_int16_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = intarr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
+    ENDIF
 
 END
 
-PRO read_uint16_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
 
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = uintarr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
 
-END
+PRO read_element_tag_disk, lun, $
+                           element_struct, $
+                           SWAP_ENDIAN=swap_endian, $
+                           DEBUG=debug
 
-PRO read_int32_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
 
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = lonarr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_uint32_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = ulonarr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_single_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = fltarr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_double_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = dblarr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_int64_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = lon64arr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_uint64_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    number_of_elements = element_tag.number_of_bytes / $
-                         size_of_data_type(element_tag.data_symbol)
-    data = ulon64arr(number_of_elements)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_utf8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    data = bytarr(element_tag.number_of_bytes)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_utf16_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    data = intarr(element_tag.number_of_bytes)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO read_utf32_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-
-    data = lonarr(element_tag.number_of_bytes)
-    readu, lun, data
-    IF swap_endian THEN swap_endian_inplace, data
-
-END
-
-PRO skip_unknown_data, lun, element_tag, SWAP_ENDIAN=swap_endian
-
-    data_bytes = bytarr(element_tag.number_of_bytes)
-    readu, lun, data_bytes
-
-END
-
-FUNCTION element_tag_struct
-
-    return, { mat_v5_element_tag, $
-              data_type             : 0UL, $
-              data_type_description : '', $
-              data_symbol           : '', $
-              number_of_bytes       : 0UL, $
-              small_element_format  : 0B $
-            }
-
-END
-
-PRO read_element_tag, lun, element_struct, SWAP_ENDIAN=swap_endian, DEBUG=debug
-
+    ; these are 4-byte variable types
+    
     data_type = 0UL
     number_of_bytes = 0UL
 
     readu, lun, data_type
+
     IF swap_endian THEN swap_endian_inplace, data_type
+
 
     IF (data_type AND 'FFFF0000'XUL) EQ 0UL THEN BEGIN
 
         readu, lun, number_of_bytes
+            
         IF swap_endian THEN swap_endian_inplace, number_of_bytes
+
 
         element_struct.data_type = data_type
         element_struct.number_of_bytes = number_of_bytes
@@ -291,6 +179,7 @@ PRO read_element_tag, lun, element_struct, SWAP_ENDIAN=swap_endian, DEBUG=debug
         element_struct.small_element_format = 1B
 
     ENDELSE
+
 
     data_type_description = ''
     data_symbol = ''
@@ -387,29 +276,161 @@ PRO read_element_tag, lun, element_struct, SWAP_ENDIAN=swap_endian, DEBUG=debug
 
 END
 
-FUNCTION subelement_array_flags_struct
 
-    return, { mat_v5_subelement_array_flags, $
-              flag_word_1 : 0UL, $
-              flag_word_2 : 0UL, $
-              complex     : 0B, $
-              global      : 0B, $
-              logical     : 0B, $
-              class       : 0B, $
-              class_description : '', $
-              class_symbol      : '' $
-            }
+
+PRO read_element_tag_memory, input_bytarr, $
+                             mem_read_ptr, $
+                             element_struct, $
+                             SWAP_ENDIAN=swap_endian, $
+                             DEBUG=debug
+
+
+    ; these are 4-byte variable types
+    
+    data_type = 0UL
+    number_of_bytes = 0UL
+
+    data_type = ulong(input_bytarr,mem_read_ptr)
+    mem_read_ptr = mem_read_ptr + 4UL
+
+    IF swap_endian THEN swap_endian_inplace, data_type
+
+
+    IF (data_type AND 'FFFF0000'XUL) EQ 0UL THEN BEGIN
+
+        number_of_bytes = ulong(input_bytarr,mem_read_ptr)
+        mem_read_ptr = mem_read_ptr + 4UL
+            
+        IF swap_endian THEN swap_endian_inplace, number_of_bytes
+
+        element_struct.data_type = data_type
+        element_struct.number_of_bytes = number_of_bytes
+        element_struct.small_element_format = 0B
+
+    ENDIF ELSE BEGIN
+
+        ;; Small data element format
+
+        element_struct.number_of_bytes = $
+            ishft(data_type AND 'FFFF0000'XUL, -16)
+        element_struct.data_type = data_type AND '0000FFFF'XUL
+        element_struct.small_element_format = 1B
+
+    ENDELSE
+
+
+    data_type_description = ''
+    data_symbol = ''
+
+    CASE element_struct.data_type OF
+        1  : BEGIN
+            data_type_description = '8 bit, signed'
+            data_symbol = 'miINT8'
+        END
+        2  : BEGIN
+            data_type_description = '8 bit, unsigned'
+            data_symbol = 'miUINT8'
+        END
+        3  : BEGIN
+            data_type_description = '16 bit, signed'
+            data_symbol = 'miINT16'
+        END
+        4  : BEGIN
+            data_type_description = '16 bit, unsigned'
+            data_symbol = 'miUINT16'
+        END
+        5  : BEGIN
+            data_type_description = '32 bit, signed'
+            data_symbol = 'miINT32'
+        END
+        6  : BEGIN
+            data_type_description = '32 bit, unsigned'
+            data_symbol = 'miUINT32'
+        END
+        7  : BEGIN
+            data_type_description = 'IEEE 754 single format'
+            data_symbol = 'miSINGLE'
+        END
+        8  : BEGIN
+            data_type_description = 'Reserved (8)'
+            data_symbol = ''
+        END
+        9  : BEGIN
+            data_type_description = 'IEEE 754 double format'
+            data_symbol = 'miDOUBLE'
+        END
+        10 : BEGIN
+            data_type_description = 'Reserved'
+            data_symbol = ''
+        END
+        11 : BEGIN
+            data_type_description = 'Reserved'
+            data_symbol = ''
+        END
+        12 : BEGIN
+            data_type_description = '64 bit, signed'
+            data_symbol = 'miINT64'
+        END
+        13 : BEGIN
+            data_type_description = '64 bit, unsigned'
+            data_symbol = 'miUINT64'
+        END
+        14 : BEGIN
+            data_type_description = 'MATLAB array'
+            data_symbol = 'miMATRIX'
+        END
+        15 : BEGIN
+            data_type_description = 'Compressed data'
+            data_symbol = 'miCOMPRESSED'
+        END
+        16 : BEGIN
+            data_type_description = 'Unicode UTF-8 encoded character data'
+            data_symbol = 'miUTF8'
+        END
+        17 : BEGIN
+            data_type_description = 'Unicode UTF-16 encoded character data'
+            data_symbol = 'miUTF16'
+        END
+        18 : BEGIN
+            data_type_description = 'Unicode UTF-32 encoded character data'
+            data_symbol = 'miUTF32'
+        END
+    ENDCASE
+
+    element_struct.data_type_description = data_type_description
+    element_struct.data_symbol = data_symbol
+
+    IF element_struct.small_element_format THEN $
+        small_element_text = 'True' $
+    ELSE $
+        small_element_text = 'False'
+
+    IF keyword_set(DEBUG) THEN BEGIN
+        print, 'Data type       : ', element_struct.data_type_description
+        print, 'Data symbol     : ', element_struct.data_symbol
+        print, 'Number of bytes : ', element_struct.number_of_bytes
+        print, 'Small element   : ', small_element_text
+    ENDIF
 
 END
 
-PRO read_subelement_array_flags, lun, subelement_tag, subelement_struct, $
-                                 SWAP_ENDIAN=swap_endian, $
-                                 DEBUG=debug
 
-    flags1 = 0UL
-    flags2 = 0UL
 
-    readu, lun, flags1, flags2
+
+PRO read_subelement_array_flags_memory, input_data, $
+                                        mem_read_ptr, $
+                                        subelement_struct, $
+                                        SWAP_ENDIAN=swap_endian, $
+                                        DEBUG=debug
+
+    ; these are 4-byte variables
+
+    array_flags = ulong(input_data,mem_read_ptr,2)
+    mem_read_ptr = mem_read_ptr + 8UL    
+
+    flags1 = array_flags[0]
+    flags2 = array_flags[1]
+
     IF swap_endian THEN swap_endian_inplace, flags1
     IF swap_endian THEN swap_endian_inplace, flags2
 
@@ -482,6 +503,14 @@ PRO read_subelement_array_flags, lun, subelement_tag, subelement_struct, $
             class_description = '32-bit, unsigned integer'
             class_symbol = 'mxUINT32_CLASS'
         END
+        14 : BEGIN
+            class_description = '64-bit, signed integer'
+            class_symbol = 'mxINT64_CLASS'
+        END
+        15 : BEGIN
+            class_description = '64-bit, unsigned integer'
+            class_symbol = 'mxUINT64_CLASS'
+        END        
     ENDCASE
 
     subelement_struct.class_description = class_description
@@ -494,20 +523,16 @@ PRO read_subelement_array_flags, lun, subelement_tag, subelement_struct, $
 
 END
 
-FUNCTION subelement_dimensions_array_struct
 
-    ;; I think that IDL allows a maximum of 8 dimensions.
 
-    return, { mat_v5_subelement_dimensions_array, $
-              number_of_dimensions : 0L, $
-              dimensions           : lonarr(8) $
-            }
 
-END
+PRO read_subelement_dimensions_array_memory, input_data, $
+                                             mem_read_ptr, $
+                                             subelement_tag, $
+                                             subelement_struct, $                                        
+                                             SWAP_ENDIAN=swap_endian, $
+                                             DEBUG=debug
 
-PRO read_subelement_dimensions_array, lun, subelement_tag, subelement_struct, $
-                                      SWAP_ENDIAN=swap_endian, $
-                                      DEBUG=debug
 
     number_of_dimensions = subelement_tag.number_of_bytes / $
                            size_of_data_type(subelement_tag.data_symbol)
@@ -518,256 +543,624 @@ PRO read_subelement_dimensions_array, lun, subelement_tag, subelement_struct, $
     ;; documentation is not clear on whether the dimensions array type
     ;; is always miINT32.
 
-    dimensions = lonarr(number_of_dimensions)
+    dim_array = lonarr(number_of_dimensions)
 
     CASE size_of_data_type(subelement_tag.data_symbol) OF
-        1 : BEGIN
+        1 : begin
             dimension = 0B
-            FOR i = 0, number_of_dimensions-1 DO BEGIN
-                readu, lun, dimension
-                IF swap_endian THEN swap_endian_inplace, dimension
-                dimensions[i] = dimension
-            ENDFOR
-        END
-        2 : BEGIN
+            dim_var_type_size = 1
+            dim_var_idl_type = 1
+        end
+        2 : begin
             dimension = 0
-            FOR i = 0, number_of_dimensions-1 DO BEGIN
-                readu, lun, dimension
-                IF swap_endian THEN swap_endian_inplace, dimension
-                dimensions[i] = dimension
-            ENDFOR
-        END
-        4 : BEGIN
+            dim_var_type_size = 2
+            dim_var_idl_type = 2
+        end
+        4 : begin
             dimension = 0L
-            FOR i = 0, number_of_dimensions-1 DO BEGIN
-                readu, lun, dimension
-                IF swap_endian THEN swap_endian_inplace, dimension
-                dimensions[i] = dimension
-            ENDFOR
-        END
+            dim_var_type_size = 4
+            dim_var_idl_type = 3
+        end
     ENDCASE
 
-    subelement_struct.dimensions = dimensions
+    FOR i = 0, number_of_dimensions-1 DO BEGIN
+        
+        dimension = fix(input_data, mem_read_ptr, type=dim_var_idl_type)
+        mem_read_ptr = mem_read_ptr + dim_var_type_size
+
+        IF swap_endian THEN swap_endian_inplace, dimension
+
+        dim_array[i] = dimension
+        
+    ENDFOR
+
+    subelement_struct.dimensions = dim_array
 
     IF keyword_set(debug) THEN BEGIN
         print, 'Number of dimensions : ', subelement_struct.number_of_dimensions
         print, 'Dimensions           : ', subelement_struct.dimensions
     ENDIF
 
-    skip_padding_bytes, lun, DEBUG=debug
+    skip_padding_bytes_memory, mem_read_ptr, DEBUG=debug
 
 END
 
-PRO read_subelement_array_name, lun, subelement_tag, array_name, $
-                                SWAP_ENDIAN=swap_endian, DEBUG=debug
+
+PRO read_subelement_array_name_memory, input_data, $
+                                       mem_read_ptr, $
+                                       subelement_tag, $
+                                       array_name, $   
+                                       SWAP_ENDIAN=swap_endian, $
+                                       DEBUG=debug
+
 
     ;; Assume that data type is always miINT8.
 
-    array_name_bytes = bytarr(subelement_tag.number_of_bytes)
-    readu, lun, array_name_bytes
-    array_name = string(array_name_bytes)
+    data_n_bytes = subelement_tag.number_of_bytes
 
+    if data_n_bytes gt 0 then begin
+        
+        array_name_bytes = input_data[mem_read_ptr:mem_read_ptr+(data_n_bytes-1)]
+        mem_read_ptr = mem_read_ptr + data_n_bytes
+
+        array_name = string(array_name_bytes)
+
+    endif else begin
+        
+        array_name = ''
+        
+    endelse
+    
     IF keyword_set(debug) THEN print, 'Array name : ', array_name
 
-    skip_padding_bytes, lun, DEBUG=debug
+    skip_padding_bytes_memory, mem_read_ptr, DEBUG=debug
 
 END
 
-PRO read_element_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian, $
-                       DEBUG=debug
 
-    data_recognized = 1
+PRO read_subelement_field_length_memory, input_data, $
+                                         mem_read_ptr, $
+                                         subelement_tag, $
+                                         field_length, $   
+                                         SWAP_ENDIAN=swap_endian, $
+                                         DEBUG=debug
 
-    SWITCH element_tag.data_symbol OF
 
-        'miINT8'       : BEGIN
-            read_int8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+    ;; Assume that data type is always miINT32
 
-        'miUINT8'      : BEGIN
-            read_uint8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+    field_length = long(input_data, mem_read_ptr)
+    mem_read_ptr = mem_read_ptr + 4UL
 
-        'miINT16'      : BEGIN
-            read_int16_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+    skip_padding_bytes_memory, mem_read_ptr, DEBUG=debug
 
-        'miUINT16'     : BEGIN
-            read_uint16_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+END
 
-        'miINT32'      : BEGIN
-            read_int32_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
 
-        'miUINT32'     : BEGIN
-            read_uint32_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+PRO read_subelement_field_names_memory, input_data, $
+                                        mem_read_ptr, $
+                                        field_names_data_tag, $                                        
+                                        field_length, $   
+                                        field_names_arr, $
+                                        SWAP_ENDIAN=swap_endian, $
+                                        DEBUG=debug
 
-        'miSINGLE'     : BEGIN
-            read_single_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+    number_of_fields = field_names_data_tag.number_of_bytes / field_length
 
-        'miDOUBLE'     : BEGIN
-            read_double_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            BREAK
-        END
-
-        'miINT64'      : BEGIN
-            read_int64_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
-
-        'miUINT64'     : BEGIN
-            read_uint64_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
-
-        'miMATRIX'     :
-        'miCOMPRESSED' : BEGIN
-            print, '*** ', element_tag.data_symbol, ' NOT IMPLEMENTED ***'
-            skip_unknown_data, lun, element_tag
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
-
-        'miUTF8'       : BEGIN
-            read_utf8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
-
-        'miUTF16'      : BEGIN
-            read_utf8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
-
-        'miUTF32'      : BEGIN
-            read_utf8_data, lun, element_tag, data, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            BREAK
-        END
+    field_names_arr = strarr(number_of_fields)
+    
+    for i = 0, number_of_fields-1 do begin
         
-        ELSE           : BEGIN
-            skip_unknown_data, lun, element_tag, SWAP_ENDIAN=swap_endian
-            skip_padding_bytes, lun, DEBUG=debug
-            data_recognized = 0
+        tmp_name_bytes = input_data[mem_read_ptr:mem_read_ptr+(field_length-1)]
+        mem_read_ptr = mem_read_ptr + field_length
+        
+        field_names_arr[i] = string(tmp_name_bytes)
+        
+    endfor
+
+    skip_padding_bytes_memory, mem_read_ptr, DEBUG=debug
+
+END
+
+
+FUNCTION read_mat_element_memory, element_tag_in, $
+                                  raw_data_in, $
+                                  mem_read_ptr, $
+                                  output_var_name, $
+                                  SWAP_ENDIAN = swap_endian, $
+                                  DEBUG=debug
+
+    data_symbol = element_tag_in.data_symbol
+    data_size_bytes = element_tag_in.number_of_bytes
+    output_var_name = ''
+
+    IF keyword_set(debug) THEN BEGIN
+        print
+        print, '** Reading data of type ' + data_symbol + ', size: ', $
+               data_size_bytes
+               
+    ENDIF
+
+    SWITCH data_symbol OF
+
+        'miUTF8':
+        'miUTF16':
+        'miUTF32':
+        'miINT8':
+        'miUINT8':
+        'miINT16':
+        'miUINT16':
+        'miINT32':
+        'miUINT32':
+        'miSINGLE':
+        'miDOUBLE':
+        'miINT64':
+        'miUINT64': begin
+            
+            data_type_size_bytes = size_of_data_type(data_symbol)
+            data_type_idl = mat_type_to_idl(data_symbol)            
+            number_of_elements = data_size_bytes / data_type_size_bytes
+            
+            if data_size_bytes gt 0 then begin
+            
+                data_out = fix(raw_data_in, $
+                               mem_read_ptr, $
+                               number_of_elements, $
+                               TYPE = data_type_idl)
+                
+                mem_read_ptr = mem_read_ptr + data_size_bytes
+                
+                IF swap_endian THEN swap_endian_inplace, data_out
+                
+            endif else begin
+                
+                ; empty string
+                
+                data_out = ''
+                
+            endelse
+            
+            skip_padding_bytes_memory, mem_read_ptr, DEBUG=debug
+            
+            break 
+        end
+        
+
+        'miMATRIX' : BEGIN
+
+            ; Array flags subelement tag
+
+            IF keyword_set(debug) THEN BEGIN
+                print
+                print, '* Array flags subelement tag'
+            ENDIF
+
+            array_flags_tag = element_tag_struct()
+            
+            read_element_tag_memory, raw_data_in, $
+                                     mem_read_ptr, $
+                                     array_flags_tag, $
+                                     SWAP_ENDIAN=swap_endian, $
+                                     DEBUG=debug
+
+            ; Array flags subelement data
+
+            IF keyword_set(debug) THEN BEGIN
+                print
+                print, '* Array flags subelement data'
+            ENDIF
+
+            array_flags_data = subelement_array_flags_struct()
+            
+            read_subelement_array_flags_memory, raw_data_in, $
+                                                mem_read_ptr, $
+                                                array_flags_data, $
+                                                SWAP_ENDIAN=swap_endian, $
+                                                DEBUG=debug
+                                         
+            matrix_class = array_flags_data.class_symbol
+            chk_complex = array_flags_data.complex eq 1
+
+            ;; Dimensions array subelement
+
+            IF keyword_set(debug) THEN BEGIN
+                print
+                print, '* Dimensions array subelement tag'
+            ENDIF
+
+            dimensions_array_tag = element_tag_struct()
+            
+            read_element_tag_memory, raw_data_in, $
+                                     mem_read_ptr, $
+                                     dimensions_array_tag, $
+                                     SWAP_ENDIAN=swap_endian, $
+                                     DEBUG=debug
+
+
+            IF keyword_set(debug) THEN BEGIN
+                print
+                print, '* Dimensions array subelement data'
+            ENDIF
+
+            dimensions_array_data = subelement_dimensions_array_struct()
+            
+            read_subelement_dimensions_array_memory, raw_data_in, $
+                                                     mem_read_ptr, $
+                                                     dimensions_array_tag, $
+                                                     dimensions_array_data, $
+                                                     SWAP_ENDIAN=swap_endian, $
+                                                     DEBUG=debug
+
+            out_ndims = dimensions_array_data.number_of_dimensions
+            out_dims  = dimensions_array_data.dimensions[0:out_ndims-1]
+
+            ;; Array name subelement
+
+            IF keyword_set(debug) THEN BEGIN
+                print
+                print, '* Array name subelement tag'
+            ENDIF
+
+            array_name_tag = element_tag_struct()
+            
+            read_element_tag_memory, raw_data_in, $
+                                     mem_read_ptr, $
+                                     array_name_tag, $
+                                     SWAP_ENDIAN=swap_endian, $
+                                     DEBUG=debug
+
+            IF keyword_set(debug) THEN BEGIN
+                print
+                print, '* Array name subelement data'
+            ENDIF
+
+            array_name = ''
+            read_subelement_array_name_memory, raw_data_in, $
+                                               mem_read_ptr, $ 
+                                               array_name_tag, $
+                                               array_name, $
+                                               SWAP_ENDIAN=swap_endian, $
+                                               DEBUG=debug
+
+            total_elements = product(out_dims, /INTEGER)
+
+            case matrix_class of
+                
+                'mxCELL_CLASS': begin
+                    
+                    ; we will import the cell array as an array of pointers
+                    
+                    if total_elements gt 0 then begin
+                        
+                        tmp_ptr_arr = ptrarr(total_elements)
+                        
+                        for i = 0, total_elements-1 do begin
+                            
+                            IF keyword_set(debug) THEN BEGIN
+                                print
+                                print, '* Cell subelement tag'
+                            ENDIF
+                            
+                            cell_element_tag = element_tag_struct()
+                            
+                            read_element_tag_memory, raw_data_in, $
+                                                     mem_read_ptr, $
+                                                     cell_element_tag, $
+                                                     SWAP_ENDIAN=swap_endian, $
+                                                     DEBUG=debug
+                            
+                            IF keyword_set(debug) THEN BEGIN
+                                print
+                                print, '* Cell subelement data'
+                            ENDIF
+                            
+                            cell_data = read_mat_element_memory(cell_element_tag, $
+                                                        raw_data_in, $
+                                                        mem_read_ptr, $
+                                                        output_var_name, $
+                                                        SWAP_ENDIAN=swap_endian, $
+                                                        DEBUG=debug)
+                            
+                            tmp_ptr_arr[i] = ptr_new(cell_data, /NO_COPY)
+                            
+                        endfor
+                        
+                        ; reform the pointer array to have the correct dimensions,
+                        ; and prevent 1x1 arrays from being created
+                        
+                        if size(tmp_ptr_arr, /N_ELEMENTS) eq 1 then begin
+                            
+                            data_out = tmp_ptr_arr[0]
+                            
+                        endif else begin
+                            
+                            data_out = reform(reform(tmp_ptr_arr, $
+                                                     out_dims, $
+                                                     /overwrite))
+                            
+                        endelse
+                        
+                    endif else begin
+                        
+                        ; zero length array of cells
+                        
+                        data_out = ''
+                        
+                    endelse
+                        
+                end
+                
+                'mxSTRUCT_CLASS': begin
+                    
+                    ; read the field name length subelement
+                    
+                    IF keyword_set(debug) THEN BEGIN
+                        print
+                        print, '* Struct subelement tag'
+                    ENDIF
+                    
+                    field_name_length_tag = element_tag_struct()
+                    
+                    read_element_tag_memory, raw_data_in, $
+                                             mem_read_ptr, $
+                                             field_name_length_tag, $
+                                             SWAP_ENDIAN=swap_endian, $
+                                             DEBUG=debug
+                    
+                    IF keyword_set(debug) THEN BEGIN
+                        print
+                        print, '* Struct field length data'
+                    ENDIF
+                    
+                    read_subelement_field_length_memory, raw_data_in, $
+                                                     mem_read_ptr, $
+                                                     field_name_length_tag, $
+                                                     field_length, $   
+                                                     SWAP_ENDIAN=swap_endian, $
+                                                     DEBUG=debug
+                    
+                    IF keyword_set(debug) THEN BEGIN
+                        print
+                        print, '* Struct field names tag'
+                    ENDIF
+                    
+                    field_names_data_tag = element_tag_struct()
+                    
+                    read_element_tag_memory, raw_data_in, $
+                                             mem_read_ptr, $
+                                             field_names_data_tag, $
+                                             SWAP_ENDIAN=swap_endian, $
+                                             DEBUG=debug
+                    
+                    IF keyword_set(debug) THEN BEGIN
+                        print
+                        print, '* Struct field names data'
+                    ENDIF
+                    
+                    read_subelement_field_names_memory, raw_data_in, $
+                                                     mem_read_ptr, $
+                                                     field_names_data_tag, $
+                                                     field_length, $   
+                                                     field_names_arr, $
+                                                     SWAP_ENDIAN=swap_endian, $
+                                                     DEBUG=debug
+                               
+                                                    
+                    n_fields = N_elements(field_names_arr)
+                    
+                    for j = 0, total_elements-1 do begin
+                    
+                        for i = 0, n_fields-1 do begin
+                            
+                            IF keyword_set(debug) THEN BEGIN
+                                print
+                                print, '* Struct field name tag: ', $
+                                       field_names_arr[i]
+                            ENDIF
+                            
+                            field_element_tag = element_tag_struct()
+                            
+                            read_element_tag_memory, raw_data_in, $
+                                                     mem_read_ptr, $
+                                                     field_element_tag, $
+                                                     SWAP_ENDIAN=swap_endian, $
+                                                     DEBUG=debug
+                            
+                            IF keyword_set(debug) THEN BEGIN
+                                print
+                                print, '* Struct field name data: ', $
+                                       field_names_arr[i]
+                            ENDIF
+                            
+                            field_data = read_mat_element_memory(field_element_tag,$
+                                                        raw_data_in, $
+                                                        mem_read_ptr, $
+                                                        output_var_name, $
+                                                        SWAP_ENDIAN=swap_endian, $
+                                                        DEBUG=debug)
+                            
+                            ; build the structure
+                            
+                            if i eq 0 then begin
+                                
+                                tmp_struct = create_struct(field_names_arr[i], $
+                                                           field_data)
+                                
+                            endif else begin
+                                
+                                tmp_struct = create_struct(tmp_struct, $
+                                                           field_names_arr[i], $
+                                                           field_data)
+                                
+                            endelse
+                            
+                        endfor
+                        
+                        ; build the structure array 
+                        
+                        if j eq 0 then begin
+                            
+                            tmp_str_array = replicate(tmp_struct, $
+                                                      total_elements)
+                                
+                        endif else begin
+                            
+                            tmp_str_array[j] = tmp_struct
+                            
+                        endelse
+                        
+                    endfor
+                    
+                    ; reform the structure array to have the correct dimensions,
+                    ; and prevent 1x1 arrays from being created
+                    
+                    if size(tmp_str_array, /N_ELEMENTS) eq 1 then begin
+                        
+                        data_out = tmp_str_array[0]
+                        
+                    endif else begin
+                        
+                        data_out = reform(reform(tmp_str_array, $
+                                                 out_dims, $
+                                                 /overwrite))
+                        
+                    endelse
+                    
+                end
+                
+                
+                'mxOBJECT_CLASS': begin
+                    
+                    message, 'Object data is type not supported'            
+                    
+                end
+                
+                'mxSPARSE_CLASS': begin
+
+                    message, 'Sparse array data type is not supported'                    
+
+                end
+                
+                else: begin
+                   
+                    ; numeric or character array 
+                    
+                    ;; Real part (pr) subelement
+        
+                    IF keyword_set(debug) THEN BEGIN
+                        print
+                        print, '* Real part subelement tag'
+                    ENDIF
+        
+                    real_part_tag = element_tag_struct()
+                    
+                    read_element_tag_memory, raw_data_in, $
+                                             mem_read_ptr, $
+                                             real_part_tag, $
+                                             SWAP_ENDIAN=swap_endian, $
+                                             DEBUG=debug
+        
+                    IF keyword_set(debug) THEN BEGIN
+                        print
+                        print, '* Real part subelement data'
+                    ENDIF
+        
+                    real_data = read_mat_element_memory(real_part_tag, $
+                                                    raw_data_in, $
+                                                    mem_read_ptr, $
+                                                    output_var_name, $
+                                                    SWAP_ENDIAN=swap_endian, $
+                                                    DEBUG=debug)
+
+                    ; cast the data to its matlab type
+                    
+                    tmp_dat = cast_to_matrix_type(real_data,matrix_class)
+        
+                    IF chk_complex THEN BEGIN
+        
+                        ;; Imaginary part (pi) subelement
+        
+                        IF keyword_set(debug) THEN BEGIN
+                            print
+                            print, '* Imaginary part subelement tag'
+                        ENDIF
+        
+                        imag_part_tag = element_tag_struct()
+                        
+                        read_element_tag_memory, raw_data_in, $
+                                                 mem_read_ptr, $
+                                                 imag_part_tag, $
+                                                 SWAP_ENDIAN=swap_endian, $
+                                                 DEBUG=debug
+        
+                        IF keyword_set(debug) THEN BEGIN
+                            print
+                            print, '* Imaginary part subelement data'
+                        ENDIF
+        
+                        imag_data = read_mat_element_memory(imag_part_tag, $
+                                                    raw_data_in, $
+                                                    mem_read_ptr, $
+                                                    output_var_name, $
+                                                    SWAP_ENDIAN=swap_endian, $
+                                                    DEBUG=debug)
+        
+                        tmp_idat = cast_to_matrix_type(real_data,matrix_class)
+        
+                        if matrix_class eq 'mxDOUBLE_CLASS' then begin
+                            
+                            chk_dcomplex = 1
+                            
+                        endif else begin
+                            
+                            chk_dcomplex = 0
+                            
+                        endelse
+        
+                        tmp_dat = complex(temporary(tmp_dat), $
+                                          temporary(tmp_idat), $
+                                          DOUBLE=chk_dcomplex)
+        
+                    ENDIF
+        
+
+                    ; prevent 1x1 arrays from being created
+                    
+                    if size(tmp_dat, /N_ELEMENTS) eq 1 then begin
+                        
+                        data_out = tmp_dat[0]
+                        
+                    endif else begin
+                        
+                        data_out = reform(reform(tmp_dat, out_dims, /overwrite))
+                        
+                    endelse
+        
+                end
+                
+            endcase
+
+            output_var_name = array_name
+            
+            break
         END
+
+
+
+        'miCOMPRESSED': begin
+            
+            message, 'Encountered miCOMPRESSED data in memory stream'
+            
+            break 
+        end
 
     ENDSWITCH
 
-    skip_padding_bytes, lun, DEBUG=debug
 
-    IF keyword_set(debug) THEN BEGIN
-        IF data_recognized THEN $
-            print, 'Data : ', data $
-        ELSE $
-            print, 'UNKNOWN DATA ELEMENT'
-    ENDIF
+    return, data_out
+
 
 END
 
-FUNCTION format_array_element_data, data, array_flags, dimensions_array
-
-    dimensions = $
-        dimensions_array.dimensions[0:dimensions_array.number_of_dimensions-1]
-
-    ;; Prevent 1x1 arrays from being created.
-
-    IF size(data, /N_ELEMENTS) NE 1 THEN $
-        _data = reform(reform(data, dimensions)) $
-    ELSE $
-        _data = data[0]
-
-    CASE array_flags.class_symbol OF
-
-        'mxCELL_CLASS'   : BEGIN
-            print, '*** Formatting ', array_flags.class_symbol, $
-                   ' not supported ***'
-        END
-
-        'mxSTRUCT_CLASS' : BEGIN
-            print, '*** Formatting ', array_flags.class_symbol, $
-                   ' not supported ***'
-        END
-
-        'mxOBJECT_CLASS' : BEGIN
-            print, '*** Formatting ', array_flags.class_symbol, $
-                   ' not supported ***'
-        END
-
-        'mxCHAR_CLASS'   : BEGIN
-            data = string(_data)
-        END
-
-        'mxSPARSE_CLASS' : BEGIN
-            print, '*** Formatting ', array_flags.class_symbol, $
-                   ' not supported ***'
-        END
-
-        'mxDOUBLE_CLASS' : BEGIN
-            IF array_flags.complex THEN $
-                data = dcomplex(_data) $
-            ELSE $
-                data = double(_data)
-        END
-
-        'mxSINGLE_CLASS' : BEGIN
-            IF array_flags.complex THEN $
-                data = complex(_data) $
-            ELSE $
-                data = float(_data)
-        END
-
-        'mxINT8_CLASS'   : BEGIN
-            print, '*** Formatting ', array_flags.class_symbol, $
-                   ' not supported ***'
-        END
-
-        'mx_UINT8_CLASS' : BEGIN
-            data = byte(_data)
-        END
-
-        'mxINT16_CLASS'  : BEGIN
-            data = fix(_data, TYPE=2)
-        END
-
-        'mxUINT16_CLASS' : BEGIN
-            data = uint(_data)
-        END
-
-        'mxINT32_CLASS'  : BEGIN
-            data = long(_data)
-        END
-
-        'mxUINT32_CLASS' : BEGIN
-            data = ulong(_data)
-        END
-
-    ENDCASE
-
-    ;; Todo: transpose the data ?
-
-    return, data
-
-END
 
 PRO load_mat, filename, path, STORE_LEVEL=store_level, $
               VERBOSE=verbose, DEBUG=debug
@@ -846,140 +1239,76 @@ PRO load_mat, filename, path, STORE_LEVEL=store_level, $
         ENDIF
 
         element_tag = element_tag_struct()
-        read_element_tag, lun, element_tag, SWAP_ENDIAN=swap_endian, DEBUG=debug
+        
+        IF keyword_set(debug) THEN BEGIN
+            point_lun, -lun, current_file_position
+            print, 'Current file position : ', current_file_position, $
+                   FORMAT='(A, Z08)'
+        ENDIF
+        
+        read_element_tag_disk, lun, $
+                               element_tag, $
+                               SWAP_ENDIAN=swap_endian, $
+                               DEBUG=debug
 
-        SWITCH element_tag.data_symbol OF
+        ; load the data element into memory - if the element is compressed, 
+        ; we need to decompress it here
+        
+        data_symbol = element_tag.data_symbol
+        
+        if data_symbol eq 'miCOMPRESSED' then begin
+        
+            ; we need to read in the data and uncompress it in memory
+        
+            data_size_bytes = element_tag.number_of_bytes
+        
+            data_element_comp = bytarr(data_size_bytes, /NOZERO)
+        
+            readu, lun, data_element_comp
+            
+            ; compressed data elements are not aligned to the 64-bit 
+            ; boundaries, so we don't need to skip padding bytes here
+        
+            data_element_uncomp = ZLIB_UNCOMPRESS(data_element_comp, TYPE = 1)
+            
+            mem_read_ptr = 0UL
+            
+            ; read the new element tag (this cannot be miCOMPRESSED)
+            
+            read_element_tag_memory, data_element_uncomp, $
+                                     mem_read_ptr, $
+                                     element_tag, $
+                                     SWAP_ENDIAN=swap_endian, $
+                                     DEBUG=debug
+            
+            data_symbol = element_tag.data_symbol
+            
+            data_element_raw = temporary(data_element_uncomp[mem_read_ptr:-1])
+            
+        endif else begin
+            
+            data_size_bytes = element_tag.number_of_bytes
+            data_element_raw = bytarr(data_size_bytes, /NOZERO)
+            readu, lun, data_element_raw
+            skip_padding_bytes_disk, lun, DEBUG=debug            
+            
+        endelse
 
-            'miMATRIX' : BEGIN
+        ; we now have the entire data element loaded into memory as a 
+        ; byte array
 
-                ;; Array flags subelement
+        data_out = read_mat_element_memory(element_tag, $
+                                           data_element_raw, $
+                                           0UL, $)
+                                           output_var_name, $
+                                           SWAP_ENDIAN=swap_endian, $
+                                           DEBUG=debug)
 
-                IF keyword_set(debug) THEN BEGIN
-                    print
-                    print, '* Array flags subelement tag'
-                ENDIF
-
-                array_flags_tag = element_tag_struct()
-                read_element_tag, lun, array_flags_tag, $
-                                  SWAP_ENDIAN=swap_endian, $
-                                  DEBUG=debug
-
-                IF keyword_set(debug) THEN BEGIN
-                    print, '* Array flags subelement data'
-                ENDIF
-
-                array_flags = subelement_array_flags_struct()
-                read_subelement_array_flags, lun, $
-                                             array_flags_tag, array_flags, $
-                                             SWAP_ENDIAN=swap_endian, $
-                                             DEBUG=debug
-
-                ;; Dimensions array subelement
-
-                IF keyword_set(debug) THEN BEGIN
-                    print
-                    print, '* Dimensions array subelement tag'
-                ENDIF
-
-                dimensions_array_tag = element_tag_struct()
-                read_element_tag, lun, dimensions_array_tag, $
-                                  SWAP_ENDIAN=swap_endian, $
-                                  DEBUG=debug
-
-                IF keyword_set(debug) THEN BEGIN
-                    print, '* Dimensions array subelement data'
-                ENDIF
-
-                dimensions_array = subelement_dimensions_array_struct()
-                read_subelement_dimensions_array, lun, $
-                                                  dimensions_array_tag, $
-                                                  dimensions_array, $
-                                                  SWAP_ENDIAN=swap_endian, $
-                                                  DEBUG=debug
-
-                ;; Array name subelement
-
-                IF keyword_set(debug) THEN BEGIN
-                    print
-                    print, '* Array name subelement tag'
-                ENDIF
-
-                array_name_tag = element_tag_struct()
-                read_element_tag, lun, array_name_tag, $
-                                  SWAP_ENDIAN=swap_endian, $
-                                  DEBUG=debug
-
-                IF keyword_set(debug) THEN BEGIN
-                    print, '* Array name subelement data'
-                ENDIF
-
-                array_name = ''
-                read_subelement_array_name, lun, array_name_tag, array_name, $
-                                            SWAP_ENDIAN=swap_endian, $
-                                            DEBUG=debug
-
-                IF keyword_set(verbose) THEN print, array_name
-
-                ;; Real part (pr) subelement
-
-                IF keyword_set(debug) THEN BEGIN
-                    print
-                    print, '* Real part (pr) subelement tag'
-                ENDIF
-
-                real_part_tag = element_tag_struct()
-                read_element_tag, lun, real_part_tag, $
-                                  SWAP_ENDIAN=swap_endian, $
-                                  DEBUG=debug
-
-                IF keyword_set(debug) THEN BEGIN
-                    print, '* Real part (pr) subelement data'
-                ENDIF
-
-                read_element_data, lun, real_part_tag, real_data, $
-                                   SWAP_ENDIAN=swap_endian, $
-                                   DEBUG=debug
-
-                data = real_data
-
-                IF array_flags.complex THEN BEGIN
-
-                    ;; Imaginary part (pi) subelement
-
-                    IF keyword_set(debug) THEN BEGIN
-                        print
-                        print, '* Imaginary part (pi) subelement tag'
-                    ENDIF
-
-                    imag_part_tag = element_tag_struct()
-                    read_element_tag, lun, imag_part_tag, $
-                                      SWAP_ENDIAN=swap_endian, $
-                                      DEBUG=debug
-
-                    IF keyword_set(debug) THEN BEGIN
-                        print, '* Imaginary part (pi) subelement data'
-                    ENDIF
-
-                    read_element_data, lun, imag_part_tag, imag_data, $
-                                       SWAP_ENDIAN=swap_endian, $
-                                       DEBUG=debug
-
-                    data = complex(real_data, imag_data)
-
-                ENDIF
-
-                data = format_array_element_data(data, array_flags, $
-                                                 dimensions_array)
-                
-            END
-
-        ENDSWITCH
 
         ;; Create a variable on the main level using the undocumented
-        ;; IDL routine ROUTINE_NAMES. This only works for IDL 5.3 and
-        ;; higher.
+        ;; IDL routine ROUTINE_NAMES. 
 
-        foo = routine_names(array_name, data, STORE=store_level)
+        foo = routine_names(output_var_name, data_out, STORE=store_level)
 
         IF keyword_set(debug) THEN BEGIN
             point_lun, -lun, current_file_position
